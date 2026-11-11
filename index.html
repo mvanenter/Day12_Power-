@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aotearoa’s power stations</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{--bg:#f7f5f0;--ink:#26323a;--mute:#6b7378;--line:#e2dccf}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg)}
+#map{position:absolute;inset:0;background:var(--bg)}
+.head{position:absolute;z-index:500;left:18px;right:18px;top:14px;pointer-events:none}
+.head>*{pointer-events:auto}
+.row{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+h1{font-size:26px;line-height:1.1;margin:0 0 4px;letter-spacing:-.01em}
+.sub{margin:0;font-size:13.5px;color:var(--mute)}
+.stats{font-size:13.5px;color:var(--mute)}
+.stats b{color:var(--ink)}
+.pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.pill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 12px;font:inherit;font-size:13px;color:var(--ink);cursor:pointer}
+.pill i{width:11px;height:11px;border-radius:50%;display:inline-block}
+.pill em{font-style:normal;color:var(--mute);font-size:12px}
+.off{opacity:.4}
+.bars{position:absolute;z-index:500;left:18px;bottom:50px;width:250px;background:rgba(255,255,255,.93);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:0 4px 18px rgba(38,50,58,.08)}
+.bars h2{margin:0 0 8px;font-size:12px;font-weight:600;color:var(--mute);text-transform:uppercase;letter-spacing:.06em}
+.br{display:grid;grid-template-columns:72px 1fr 62px;align-items:center;gap:8px;font-size:12.5px;padding:3px 0;cursor:pointer}
+.br span:last-child{text-align:right;color:var(--mute);font-variant-numeric:tabular-nums}
+.tr{height:9px;background:#f0ece4;border-radius:5px;overflow:hidden}
+.tr div{height:100%;border-radius:5px}
+.foot{position:absolute;z-index:500;left:18px;right:18px;bottom:10px;font-size:11.5px;color:var(--mute);line-height:1.4;pointer-events:none}
+.leaflet-control-zoom{border:1px solid var(--line)!important;border-radius:10px!important;overflow:hidden;box-shadow:0 4px 18px rgba(38,50,58,.08)}
+.leaflet-control-zoom a{color:var(--ink)!important}
+.leaflet-container{font:inherit}
+.leaflet-popup-content-wrapper{border-radius:12px;box-shadow:0 8px 28px rgba(38,50,58,.18)}
+.leaflet-popup-content{margin:14px 16px;min-width:210px}
+.pt{font-size:16px;font-weight:700;margin:0 0 3px}
+.pf{font-size:13px;color:var(--mute);margin:0 0 10px;display:flex;align-items:center;gap:7px}
+.pf i{width:10px;height:10px;border-radius:50%}
+.pd{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:13px}
+.pd span{color:var(--mute)}
+.pd b{font-weight:600}
+.leaflet-tooltip{border:1px solid var(--line);color:var(--ink);font-weight:600;border-radius:8px;box-shadow:none}
+@media(max-width:720px){h1{font-size:21px}.bars{display:none}.foot{font-size:10.5px}}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="head">
+  <div class="row">
+    <div><h1>Aotearoa’s power stations</h1>
+    <p class="sub">Installed capacity of generation across New Zealand. Area of a circle by capacity.</p></div>
+    <div class="stats" id="stats"></div>
+  </div>
+  <div class="pills" id="pills"></div>
+</div>
+<div class="bars"><h2>Capacity by fuel</h2><div id="bars"></div></div>
+<div class="foot">Hover a circle for its name and click to pin the details. Scroll or use + and − to zoom, drag to pan. Data: OpenStreetMap contributors (ODbL), with a few capacities from Wikipedia (CC BY-SA). Coastline: Natural Earth. Capacities are as tagged and may differ from operator ratings. Map by Melanie van Enter. #30DayMapChallenge Day 12: Power</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script>
+const COLORS={Hydro:"#0f8b8d",Geothermal:"#c2417a",Wind:"#6a9a3b",Solar:"#f08a24",Gas:"#7b5cc4",Thermal:"#2f3a4b",Other:"#a39889"};
+const fmt=n=>Math.round(n).toLocaleString("en-NZ");
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const map=L.map("map",{zoomControl:false,zoomSnap:.25,minZoom:4,attributionControl:false});
+L.control.zoom({position:"bottomright"}).addTo(map);
+map.fitBounds([[-47.4,166.2],[-34.2,178.8]],{paddingTopLeft:[10,120],paddingBottomRight:[10,50]});
+
+Promise.all([
+  fetch("data/nz.geojson").then(r=>r.json()),
+  new Promise(res=>Papa.parse("data/stations.csv",{download:true,header:true,dynamicTyping:true,skipEmptyLines:true,complete:r=>res(r.data)}))
+]).then(([land,rows])=>{
+  L.geoJSON(land,{interactive:false,style:{fillColor:"#ece7de",fillOpacity:1,color:"#cfc7b8",weight:1}}).addTo(map);
+  rows=rows.filter(r=>r.mw>0&&r.lat&&r.lon&&r.lon>0).sort((a,b)=>b.mw-a.mw);
+  const total=rows.reduce((s,r)=>s+r.mw,0),by={};
+  rows.forEach((r,i)=>{r.rank=i+1;const b=by[r.fuel]=by[r.fuel]||{mw:0,n:0,layer:L.layerGroup().addTo(map),on:true};b.mw+=r.mw;b.n++});
+  const fuels=Object.keys(by).sort((a,b)=>by[b].mw-by[a].mw),top=by[fuels[0]];
+  document.getElementById("stats").innerHTML=`<b>${rows.length}</b> stations · <b>${fmt(total)}</b> MW · ${fuels[0].toLowerCase()} is <b>${Math.round(top.mw/total*100)}%</b>`;
+
+  rows.forEach(r=>{
+    const c=COLORS[r.fuel]||COLORS.Other;
+    const m=L.circleMarker([r.lat,r.lon],{radius:3+1.15*Math.sqrt(r.mw),fillColor:c,fillOpacity:.72,color:"#fff",weight:1.4});
+    m.bindTooltip(esc(r.name),{direction:"top",offset:[0,-4]});
+    m.bindPopup(`<p class="pt">${esc(r.name)}</p><p class="pf"><i style="background:${c}"></i>${esc(r.fuel)}</p>
+      <div class="pd"><span>Capacity</span><b>${r.mw>=10?fmt(r.mw):r.mw.toFixed(2)} MW</b>
+      <span>Share</span><b>${(r.mw/total*100).toFixed(1)}% of the total</b>
+      <span>Rank</span><b>${r.rank} of ${rows.length}</b>
+      ${r.operator?`<span>Operator</span><b>${esc(r.operator)}</b>`:""}
+      ${r.start_date?`<span>Since</span><b>${esc(r.start_date)}</b>`:""}</div>`,{autoPanPadding:[20,120]});
+    m.addTo(by[r.fuel].layer);
+  });
+
+  const pills=document.getElementById("pills"),bars=document.getElementById("bars");
+  const toggle=f=>{const b=by[f];b.on=!b.on;b.on?b.layer.addTo(map):map.removeLayer(b.layer);
+    document.querySelectorAll(`[data-f="${f}"]`).forEach(e=>e.classList.toggle("off",!b.on))};
+  fuels.forEach(f=>{
+    const b=by[f],c=COLORS[f]||COLORS.Other;
+    pills.insertAdjacentHTML("beforeend",`<button class="pill" data-f="${f}"><i style="background:${c}"></i>${f} <em>${b.n}</em></button>`);
+    bars.insertAdjacentHTML("beforeend",`<div class="br" data-f="${f}"><span>${f}</span><div class="tr"><div style="width:${b.mw/top.mw*100}%;background:${c}"></div></div><span>${fmt(b.mw)} MW</span></div>`);
+  });
+  document.querySelectorAll("[data-f]").forEach(e=>e.addEventListener("click",()=>toggle(e.dataset.f)));
+});
+</script>
+</body>
+</html>
